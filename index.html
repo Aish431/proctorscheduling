@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Proctor Assignment Console</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
+<style>
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);--bg:#f6f7f9;--card:#fff;--tx:#1b1f24;--mu:#6b7280;--bd:#e2e5ea;--ac:#1f4e78;--ok:#1a7f4b;--bad:#b42318;--warn:#b54708}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#111418;--card:#1a1f26;--tx:#e8eaed;--mu:#9aa3af;--bd:#2c333d;--ac:#6ea8dc;--ok:#4cc38a;--bad:#f97066;--warn:#fdb022}}
+:root[data-theme="dark"]{--bg:#111418;--card:#1a1f26;--tx:#e8eaed;--mu:#9aa3af;--bd:#2c333d;--ac:#6ea8dc;--ok:#4cc38a;--bad:#f97066;--warn:#fdb022}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.45 system-ui,-apple-system,"Segoe UI",Arial,sans-serif}
+header{padding:14px 16px;background:var(--card);border-bottom:1px solid var(--bd)}
+h1{font-size:17px;margin:0 0 10px}h2{font-size:16px;margin:0 0 4px}h3{font-size:13px;margin:16px 0 6px;text-transform:uppercase;letter-spacing:.04em;color:var(--mu)}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.btn{border:1px solid var(--bd);background:var(--card);color:var(--tx);padding:6px 11px;border-radius:7px;cursor:pointer;font:inherit}
+.btn:hover{border-color:var(--ac)}.btn.pri{background:var(--ac);color:#fff;border-color:var(--ac)}.btn[disabled]{opacity:.4;cursor:not-allowed}
+.btn.sm{padding:2px 8px;font-size:12px}.btn.bad{color:var(--bad)}
+.mu{color:var(--mu)}#sum{margin-top:8px}#msg{margin-top:4px;color:var(--ok);min-height:18px}
+.tabs{display:flex;gap:4px;padding:8px 16px 0}.tab{padding:6px 12px;border:1px solid var(--bd);border-bottom:none;border-radius:7px 7px 0 0;cursor:pointer;background:var(--bg)}.tab.on{background:var(--card);font-weight:600}
+main{padding:0 16px 24px}
+.grid{display:grid;grid-template-columns:minmax(240px,320px) 1fr;gap:12px;background:var(--card);border:1px solid var(--bd);border-radius:0 8px 8px 8px;padding:12px}
+@media(max-width:720px){.grid{grid-template-columns:1fr}}
+.list{max-height:70vh;overflow:auto}
+.item{padding:7px 9px;border:1px solid var(--bd);border-radius:7px;margin-bottom:6px;cursor:pointer;display:flex;justify-content:space-between;gap:8px}
+.item.on{border-color:var(--ac);box-shadow:0 0 0 1px var(--ac)}
+.chip{font-size:12px;padding:1px 8px;border-radius:99px;border:1px solid var(--bd);white-space:nowrap;height:fit-content}
+.ok{color:var(--ok);border-color:var(--ok)}.short{color:var(--bad);border-color:var(--bad)}
+.p{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--bd)}
+.w{color:var(--warn);font-size:12px}.z{color:var(--bad);font-weight:600}
+input[type=number]{width:52px;padding:3px;background:var(--bg);color:var(--tx);border:1px solid var(--bd);border-radius:5px}
+select,textarea{background:var(--bg);color:var(--tx);border:1px solid var(--bd);border-radius:5px;padding:4px}
+table{border-collapse:collapse;width:100%}th,td{text-align:left;padding:5px 8px;border-bottom:1px solid var(--bd);vertical-align:top}
+.scroll{overflow-x:auto}
+.comments{white-space:pre-wrap;min-width:280px;max-width:520px;overflow-wrap:anywhere;font-size:12px;line-height:1.4}table{min-width:1000px}</style></head>
+<body>
+<header>
+<h1>Proctor assignment console</h1>
+<div class="row">
+<label class="btn">1. Proctor requests (.xlsx)<input type="file" id="fp" accept=".xlsx,.xls" hidden></label>
+<label class="btn">2. Student availability (.xlsx)<input type="file" id="fs" accept=".xlsx,.xls" hidden></label>
+<label class="btn">3. Solver result (.json)<input type="file" id="fj" accept=".json" hidden></label>
+<button class="btn pri" id="auto">Auto-fill gaps</button>
+<button class="btn" id="clear">Clear all</button>
+<button class="btn" id="forget">Forget saved files</button>
+<button class="btn" id="exp">Export</button>
+</div>
+<div id="sum" class="mu"></div><div id="msg"></div>
+</header>
+<div class="tabs"><div class="tab on" data-a="tab" data-v="exams">Exams</div><div class="tab" data-a="tab" data-v="students">Students</div></div>
+<main id="app"></main>
+<script>
+const MAXL=3, SAMEDAY_PENALTY=0.5, SLOT=/(\d{2})\/(\d{2})\/(\d{4})\s*\(([A-Za-z]+)\)\s*(\d{1,2}:\d{2}[AP]M)\s*-\s*(\d{1,2}:\d{2}[AP]M)/;
+const $=s=>document.querySelector(s), pad=n=>String(n).padStart(2,'0');
+const st={slots:[],exams:[],students:[],asg:{},need:{},extra:{},view:'exams',sel:null,raw:{}};
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const iso=d=>d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());
+const tm=s=>{const m=s.match(/(\d+):(\d+)([AP])M/i);let h=+m[1]%12;if(m[3].toUpperCase()==='P')h+=12;return h*60+ +m[2]};
+function toDate(v){if(v==null||v==='')return null;if(v instanceof Date)return iso(new Date(v.getTime()+432e5));
+ const s=String(v).trim();let m=s.match(/^(\d{4})-(\d{2})-(\d{2})/);if(m)return m[1]+'-'+m[2]+'-'+m[3];
+ m=s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);if(m){let y=+m[3];if(y<100)y+=2000;return y+'-'+pad(m[1])+'-'+pad(m[2])}return null}
+function toMin(v){if(v==null||v==='')return null;if(v instanceof Date)return v.getHours()*60+v.getMinutes();
+ if(typeof v==='number')return Math.round((v%1)*1440);
+ const m=String(v).trim().toLowerCase().replace(/\./g,':').replace(/\s/g,'').match(/^(\d{1,2}):?(\d{2})?(am|pm)?$/);if(!m)return null;
+ let h=+m[1];if(m[3]==='pm'&&h<12)h+=12;if(m[3]==='am'&&h===12)h=0;return h*60+ +(m[2]||0)}
+const cnt=v=>{const m=String(v??'').match(/\d+/);return m?+m[0]:0};
+const colOf=(row,p)=>Object.keys(row).find(k=>k.trim().toLowerCase().startsWith(p.toLowerCase()));
+const gnd=g=>{const s=String(g??'').trim().toLowerCase();return s.startsWith('m')?'male':s.startsWith('f')?'female':null};
+function blockedFrom(t,valid){const o=new Set();if(!t)return o;
+ for(const m of String(t).matchAll(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/g)){const a=+m[1],b=+m[2],y=m[3].length===4?+m[3]:2000+ +m[3];
+  for(const[d,mo]of[[a,b],[b,a]]){const k=y+'-'+pad(mo)+'-'+pad(d);if(valid.has(k))o.add(k)}}return o}
+async function readSheet(f){const wb=XLSX.read(await f.arrayBuffer(),{type:'array',cellDates:true});return XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{defval:null})}
+
+function build(){
+ const {prof,stu}=st.raw;if(!prof||!stu||!stu.length)return;
+ st.slots=[];Object.keys(stu[0]).forEach(c=>{const m=c.match(SLOT);if(!m)return;
+  st.slots.push({id:m[3]+'-'+m[2]+'-'+m[1]+'_'+m[5],date:m[3]+'-'+m[2]+'-'+m[1],start:tm(m[5]),label:m[4].slice(0,3)+' '+m[1]+'/'+m[2]+' '+m[5]+'-'+m[6],col:c})});
+ const valid=new Set(st.slots.map(s=>s.date));
+ const r0=stu[0],cE=colOf(r0,'List all the exams'),cP=colOf(r0,'List any presentations'),cB=colOf(r0,'Please enter the dates'),cC=colOf(r0,'Do you have any specific')||Object.keys(r0).find(k=>/comment|preference|anything else|additional|remarks|notes/i.test(k)&&!SLOT.test(k)),cT=colOf(r0,'Completion time')||colOf(r0,'Last modified');
+ let rows=stu.map((r,i)=>({r,i}));if(cT)rows.sort((a,b)=>new Date(a.r[cT])-new Date(b.r[cT]));
+ const seen=new Map();rows.forEach(({r,i})=>{const em=String(r.Email??'').trim().toLowerCase();seen.set(em||'#'+i,{r,i})});
+ st.students=[...seen.values()].sort((a,b)=>a.i-b.i).map(({r,i},n)=>{const em=String(r.Email??'').trim()||null,nm=String(r.Name??'').trim();
+  const av={};st.slots.forEach(s=>av[s.id]=String(r[s.col]).trim().toLowerCase()==='yes');
+  const blk=new Set([...blockedFrom(r[cE],valid),...blockedFrom(r[cP],valid),...blockedFrom(r[cB],valid)]);
+  return{i:n,key:em?em.toLowerCase():'S'+(r.ID??i),name:nm||em||'Student '+(i+1),email:em,gender:gnd(r.Gender),av,blk,comments:cC?r[cC]:null,raw:r}});
+ const p0=prof[0]||{},cCo=colOf(p0,'Course Name'),cW=colOf(p0,'Would you'),cN=colOf(p0,'Full name of your requested'),cX=colOf(p0,'Any other'),cTm=colOf(p0,'Exam Start Time');
+ st.det='Form columns found → comments: '+(cC?'"'+String(cC).slice(0,45)+'"':'NOT FOUND')+' | exams list: '+(cE?'yes':'NOT FOUND')+' | presentations: '+(cP?'yes':'NOT FOUND')+' | blocked dates: '+(cB?'yes':'NOT FOUND');
+ st.exams=prof.map((r,i)=>{const date=toDate(r['Exam Date']),mn=toMin(r[cTm]);let slot=null;
+  if(date&&mn!=null){let best=null,bd=1e9;st.slots.filter(s=>s.date===date).forEach(s=>{const d=Math.abs(s.start-mn);if(d<bd){bd=d;best=s}});if(best&&bd<=180)slot=best.id}
+  return{id:String(r.ID??i+1),course:String(r[cCo]??'Exam '+(i+1)).trim(),date,slot,m:cnt(r['Number of male proctors required']),f:cnt(r['Number of Female proctors required']),
+   ta:[r[cW],r[cN]].filter(Boolean).join(' — '),comments:r[cX],prof:r.Name,profEmail:r.Email}}).filter(e=>e.m+e.f>0||true);
+ try{const sv=JSON.parse(localStorage.getItem('pc1')||'null');if(sv){const ids=new Set(st.exams.map(e=>e.id)),ks=new Set(st.students.map(s=>s.key));
+  st.asg={};Object.entries(sv.asg||{}).forEach(([k,v])=>{if(ids.has(k))st.asg[k]=v.filter(x=>ks.has(x))});st.need=sv.need||{};st.extra=sv.extra||{};}}catch(e){}
+ st.sel=st.exams[0]?.id;render()}
+
+const A=e=>st.asg[e.id]||(st.asg[e.id]=[]);
+const S=k=>st.students.find(s=>s.key===k);
+const load=s=>st.exams.reduce((n,e)=>n+(A(e).includes(s.key)?1:0),0);
+const need=(e,g)=>{const o=st.need[e.id];return o&&o[g]!=null?o[g]:(g==='male'?e.m:e.f)};
+const filled=(e,g)=>A(e).filter(k=>S(k)?.gender===g).length;
+const blocked=(s,d)=>s.blk.has(d)||(st.extra[s.key]||[]).includes(d);
+const slotOf=id=>st.slots.find(s=>s.id===id);
+const cands=e=>e.slot?st.students.filter(s=>s.av[e.slot]&&!blocked(s,e.date)&&!A(e).includes(s.key)):[];
+function warns(s,e){const hard=[],soft=[];st.exams.forEach(o=>{if(o!==e&&A(o).includes(s.key)){if(o.slot===e.slot)hard.push('clashes with '+o.course);else if(o.date===e.date)hard.push('already has '+o.course+' that day')}});
+ if(load(s)>=MAXL)hard.push('already at '+MAXL);if(!s.gender)soft.push('gender missing');return{hard,soft}}
+function autofill(){
+ // Multi-start, scarcity-first heuristic. Preserve current assignments and try
+ // several orderings; keep the result that fills the most seats, then balances load.
+ const base=JSON.parse(JSON.stringify(st.asg||{}));
+ const assignedCount=asg=>Object.values(asg).reduce((n,a)=>n+(a||[]).length,0);
+ const score=asg=>{
+  const filledSeats=st.exams.reduce((n,e)=>n+Math.min((asg[e.id]||[]).filter(k=>S(k)?.gender==='male').length,need(e,'male'))+Math.min((asg[e.id]||[]).filter(k=>S(k)?.gender==='female').length,need(e,'female')),0);
+  const loads=st.students.map(s=>st.exams.reduce((n,e)=>n+((asg[e.id]||[]).includes(s.key)?1:0),0));
+  const imbalance=loads.reduce((n,l)=>n+l*l,0);
+  return [filledSeats,-imbalance,assignedCount(asg)];
+ };
+ const better=(a,b)=>!b||a[0]>b[0]||(a[0]===b[0]&&(a[1]>b[1]||(a[1]===b[1]&&a[2]>b[2])));
+ let best=null,bestScore=null;
+ for(let trial=0;trial<12;trial++){
+  st.asg=JSON.parse(JSON.stringify(base));
+  // Recompute the scarcest exam/gender requirement after every placement.
+  for(let step=0;step<st.exams.length*MAXL*4;step++){
+   const gaps=[];
+   for(const e of st.exams){if(!e.slot)continue;
+    for(const g of ['male','female']){
+     const remaining=need(e,g)-filled(e,g);if(remaining<=0)continue;
+     const eligible=cands(e).filter(s=>s.gender===g&&!warns(s,e).hard.length);
+     if(eligible.length)gaps.push({e,g,remaining,eligible,ratio:eligible.length/remaining});
+    }
+   }
+   if(!gaps.length)break;
+   gaps.sort((a,b)=>a.ratio-b.ratio || a.eligible.length-b.eligible.length || Math.random()-.5);
+   const target=gaps[0];
+   target.eligible.sort((a,b)=>{
+    const availA=Object.values(a.av).filter(Boolean).length,availB=Object.values(b.av).filter(Boolean).length;
+    const loadDiff=load(a)-load(b);
+    return availA-availB || loadDiff || (Math.random()-.5);
+   });
+   A(target.e).push(target.eligible[0].key);
+  }
+  const candidate=JSON.parse(JSON.stringify(st.asg));const sc=score(candidate);
+  if(better(sc,bestScore)){best=candidate;bestScore=sc}
+ }
+ st.asg=best||base;
+ return Math.max(0,assignedCount(st.asg)-assignedCount(base));
+}
+const snapshot=()=>({asg:st.asg,need:st.need,extra:st.extra});
+const save=()=>{try{localStorage.setItem('pc1',JSON.stringify(snapshot()))}catch(e){}};
+const msg=t=>{$('#msg').textContent=t};
+
+function render(){
+ const app=$('#app');
+ if(!st.exams.length||!st.students.length){app.innerHTML='<p class="mu" style="padding:16px">Load both Excel files above. Everything stays in your browser.</p>';$('#sum').textContent='';return}
+ const tot=st.exams.reduce((n,e)=>n+need(e,'male')+need(e,'female'),0),fl=st.exams.reduce((n,e)=>n+Math.min(filled(e,'male'),need(e,'male'))+Math.min(filled(e,'female'),need(e,'female')),0);
+ const zero=st.students.filter(s=>!load(s)).length;
+ $('#sum').innerHTML=`Seats filled <b>${fl}/${tot}</b> · Students: ${st.students.length} · With no duty: <b class="${zero?'z':''}">${zero}</b> · Max per student: ${MAXL}<br><small>${esc(st.det||'')}</small>`;
+ document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('on',t.dataset.v===st.view));
+ app.innerHTML=st.view==='exams'?examsView():studentsView();save()}
+
+function examsView(){
+ const list=st.exams.map(e=>{const nd=need(e,'male')+need(e,'female'),f=Math.min(filled(e,'male'),need(e,'male'))+Math.min(filled(e,'female'),need(e,'female'));
+  return`<div class="item ${e.id===st.sel?'on':''}" data-a="sel" data-e="${esc(e.id)}"><span>${esc(e.course)}<br><small class="mu">${esc(slotOf(e.slot)?.label||e.date||'no slot')}</small></span><span class="chip ${f>=nd&&e.slot?'ok':'short'}">${f}/${nd}</span></div>`}).join('');
+ const e=st.exams.find(x=>x.id===st.sel);return`<div class="grid"><div class="list">${list}</div><div>${e?detail(e):''}</div></div>`}
+
+function pickOpts(e,g){return cands(e).filter(c=>!g||c.gender===g).sort((a,b)=>load(a)-load(b)||a.name.localeCompare(b.name)).map(c=>{const w=warns(c,e);
+ return`<option value="${c.i}" ${w.hard.length?'disabled':''}>${esc(c.name)} · ${c.gender||'?'} · ${load(c)} duties${w.hard.length?' ⚠ '+esc(w.hard[0]):w.soft.length?' • '+esc(w.soft[0]):''}</option>`}).join('')}
+function detail(e){
+ const opts=st.slots.map(s=>`<option value="${esc(s.id)}" ${s.id===e.slot?'selected':''}>${esc(s.label)}</option>`).join('');
+ const asg=A(e).map(k=>S(k)).filter(Boolean).map(s=>{const w=warns(s,e);return`<div class="p"><span>${esc(s.name)} <small class="mu">${s.gender||'?'} · ${load(s)} duties</small><br><span class="w">${esc([...w.hard,...w.soft].join('; '))}</span></span><span class="row"><select data-a="swap" data-e="${esc(e.id)}" data-s="${s.i}"><option value="">Swap with…</option>${pickOpts(e,s.gender)}</select><button class="btn sm" data-a="cant" data-e="${esc(e.id)}" data-s="${s.i}" title="Blocks this date for the student, removes them, and refills">Can't do it</button><button class="btn sm bad" data-a="rm" data-e="${esc(e.id)}" data-s="${s.i}">Remove</button></span></div>`}).join('')||'<p class="mu">Nobody yet.</p>';
+ const cs=cands(e).sort((a,b)=>load(a)-load(b)).map(s=>{const w=warns(s,e);return`<div class="p"><span>${esc(s.name)} <small class="mu">${s.gender||'?'} · ${load(s)} duties</small>${s.comments?`<br><small class="mu">${esc(s.comments)}</small>`:''}<br><span class="w">${esc([...w.hard,...w.soft].join('; '))}</span></span><button class="btn sm" data-a="add" data-e="${esc(e.id)}" data-s="${s.i}" ${w.hard.length?'disabled':''}>Add</button></div>`}).join('')||'<p class="mu">No available students.</p>';
+ return`<h2>${esc(e.course)}</h2><div class="mu">${esc(e.date||'no date')} ${e.prof?'· '+esc(e.prof):''}</div>
+ ${e.ta?`<div class="w">TA note: ${esc(e.ta)}</div>`:''}${e.comments?`<div class="mu">Comments: ${esc(e.comments)}</div>`:''}
+ <div class="row" style="margin-top:8px">Slot: <select data-a="slotsel" data-e="${esc(e.id)}"><option value="">— none —</option>${opts}</select></div>
+ <div class="row" style="margin-top:8px">Male needed <input type="number" min="0" data-a="need" data-g="male" data-e="${esc(e.id)}" value="${need(e,'male')}"> (filled ${filled(e,'male')})
+ Female needed <input type="number" min="0" data-a="need" data-g="female" data-e="${esc(e.id)}" value="${need(e,'female')}"> (filled ${filled(e,'female')})</div>
+ <div class="mu" style="font-size:12px">Lower these numbers if TAs/instructors already cover part of the requirement.</div>
+ <h3>Assigned</h3>${asg}<h3>Available students (fewest duties first)</h3>
+ <select data-a="addsel" data-e="${esc(e.id)}" style="max-width:100%"><option value="">All available students — pick one to add…</option>${pickOpts(e,null)}</select>${cs}`}
+
+function studentsView(){
+ const rows=st.students.map(s=>({s,l:load(s)})).sort((a,b)=>a.l-b.l).map(({s,l})=>{const d=st.exams.filter(e=>A(e).includes(s.key)).map(e=>e.course+' ('+(slotOf(e.slot)?.label||'')+')').join('; ');
+  const av=Object.values(s.av).filter(Boolean).length;
+  return`<tr><td>${esc(s.name)}</td><td>${s.email?`<small>${esc(s.email)}</small>`:''}</td><td>${s.gender||'?'}</td><td class="${l?'':'z'}">${l}</td><td>${av}</td><td>${esc(d)}</td><td class="comments">${esc(s.comments||'—')}</td></tr>`}).join('');
+ return`<div class="grid" style="display:block"><div class="scroll"><table><tr><th>Student</th><th>Email</th><th>Gender</th><th>Duties</th><th>Slots available</th><th>Assigned</th><th>Comments / preferences</th></tr>${rows}</table></div></div>`}
+
+document.addEventListener('click',ev=>{const t=ev.target.closest('[data-a]');if(!t)return;const a=t.dataset.a,e=st.exams.find(x=>x.id===t.dataset.e),s=st.students[+t.dataset.s];
+ if(a==='tab'){st.view=t.dataset.v}
+ else if(a==='sel'){st.sel=t.dataset.e}
+ else if(a==='add'){A(e).push(s.key)}
+ else if(a==='rm'){st.asg[e.id]=A(e).filter(k=>k!==s.key)}
+ else if(a==='cant'){(st.extra[s.key]=st.extra[s.key]||[]).push(e.date);st.exams.filter(o=>o.date===e.date).forEach(o=>st.asg[o.id]=A(o).filter(k=>k!==s.key));const n=autofill();msg(s.name+' blocked on '+e.date+'; '+n+' seat(s) refilled automatically.')}
+ else return;render()});
+document.addEventListener('change',ev=>{const t=ev.target.closest('[data-a]');if(!t)return;const e=st.exams.find(x=>x.id===t.dataset.e);
+ if(t.dataset.a==='need'){(st.need[e.id]=st.need[e.id]||{})[t.dataset.g]=Math.max(0,+t.value||0)}
+ else if(t.dataset.a==='slotsel'){e.slot=t.value||null;st.asg[e.id]=[]}
+ else if(t.dataset.a==='swap'){if(t.value===''){return}const o=st.students[+t.dataset.s],n=st.students[+t.value];st.asg[e.id]=A(e).map(k=>k===o.key?n.key:k);msg('Swapped '+o.name+' → '+n.name+'.')}
+ else if(t.dataset.a==='addsel'){if(t.value===''){return}A(e).push(st.students[+t.value].key)}
+ else return;render()});
+$('#fp').onchange=async ev=>{st.raw.prof=await readSheet(ev.target.files[0]);saveRaw();build()};
+$('#fs').onchange=async ev=>{st.raw.stu=await readSheet(ev.target.files[0]);saveRaw();build()};
+$('#fj').onchange=async ev=>{if(!st.exams.length||!st.students.length){msg('Load the two Excel files first, then the solver result.');return}
+ try{const j=JSON.parse(await ev.target.files[0].text()),ids=new Set(st.exams.map(e=>e.id)),ks=new Set(st.students.map(s=>s.key));let n=0;st.asg={};
+  Object.entries(j.assignments||{}).forEach(([id,l])=>{if(ids.has(id)){st.asg[id]=l.filter(k=>ks.has(k));n+=st.asg[id].length}});
+  msg('Loaded solver result: '+n+' assignments.');render()}catch(e){msg('Could not read that JSON file.')}ev.target.value=''};
+$('#auto').onclick=()=>{msg(autofill()+' seat(s) filled.');render()};
+$('#clear').onclick=()=>{st.asg={};msg('All assignments cleared.');render()};
+async function exportXlsx(){
+ const wb=new ExcelJS.Workbook();
+ const mk=(name,head,rows,widths,opt={})=>{
+  const ws=wb.addWorksheet(name);ws.addRow(head);rows.forEach(r=>ws.addRow(r));
+  widths.forEach((w,i)=>ws.getColumn(i+1).width=w);
+  ws.getRow(1).height=30;
+  ws.getRow(1).eachCell(c=>{c.font={name:'Arial',bold:true,color:{argb:'FFFFFFFF'}};c.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF1F4E78'}};c.alignment={vertical:'middle',wrapText:true}});
+  ws.eachRow((row,n)=>{if(n===1)return;const bad=opt.flag&&opt.flag(rows[n-2]);row.height=42;row.eachCell({includeEmpty:true},c=>{c.font={name:'Arial',color:bad?{argb:'FF9C0006'}:undefined};if(opt.wrap)c.alignment={vertical:'top',wrapText:true}})});
+  ws.views=[{state:'frozen',ySplit:1}];ws.autoFilter={from:{row:1,column:1},to:{row:1,column:head.length}};return ws};
+ const R=st.exams.map(e=>{const as=A(e).map(S).filter(Boolean),mf=as.filter(s=>s.gender==='male').length,ff=as.filter(s=>s.gender==='female').length,mn=need(e,'male'),fn=need(e,'female'),sh=[];
+  if(!e.slot)sh.push('no slot matched');if(mf<mn)sh.push('male short '+(mn-mf));if(ff<fn)sh.push('female short '+(fn-ff));
+  return[e.id,e.course,e.prof||'',e.date||'',slotOf(e.slot)?.label||'',mn,mf,fn,ff,sh.length?sh.join('; '):'Filled',sh.length?0:1,as.map(s=>s.name).sort().join(', '),e.ta||'',e.comments||'']});
+ const R2=st.exams.map(e=>{
+   const as=A(e).map(S).filter(Boolean),mf=as.filter(s=>s.gender==='male').length,ff=as.filter(s=>s.gender==='female').length,mn=need(e,'male'),fn=need(e,'female'),sh=[];
+   if(!e.slot)sh.push('no slot matched');
+   if(mf<mn)sh.push('male short '+(mn-mf));
+   if(ff<fn)sh.push('female short '+(fn-ff));
+   return[e.id,e.course,e.prof||'',e.date||'',slotOf(e.slot)?.label||'',mn,mf,fn,ff,sh.length?sh.join('; '):'Filled',sh.length?0:1,as.map(s=>s.name).join(', '),as.map(s=>s.email||'').filter(Boolean).join(', '),e.ta||'',e.comments||'']
+ });
+ mk('Roster',['Exam ID','Course','Professor','Date','Slot','Male needed','Male filled','Female needed','Female filled','Status','All filled (1/0)','Assigned proctors','Assigned proctor emails','TA note (from form)','Professor comments'],R2,[8,26,22,12,24,12,12,13,13,18,15,45,45,30,40],{flag:r=>r[10]===0});
+ const U=st.exams.filter(e=>!e.slot).map(e=>[e.id,e.course,e.date||'',need(e,'male')+need(e,'female')]);
+ if(U.length)mk('Unscheduled Exams',['Exam ID','Course','Exam Date','Needed'],U,[8,26,50,10]);
+ const V=st.exams.map(e=>{const all=e.slot?st.students.filter(s=>s.av[e.slot]&&!blocked(s,e.date)):[];
+  const fmt=g=>all.filter(s=>g===null?!s.gender:s.gender===g).sort((a,b)=>load(a)-load(b)).map(s=>s.name+' ('+load(s)+' duties'+(A(e).includes(s.key)?', ASSIGNED':'')+')').join(', ');
+  return[e.id,e.course,e.date||'',slotOf(e.slot)?.label||'',need(e,'male')+'M / '+need(e,'female')+'F',A(e).length,all.length,fmt('male'),fmt('female'),fmt(null)]});
+ mk('Available Students',['Exam ID','Course','Date','Slot','Needed','Assigned so far','# available','Available - male','Available - female','Available - gender missing'],V,[8,26,12,24,12,12,11,70,70,30],{wrap:true});
+ const T=[];st.students.forEach(s=>{const ds=st.exams.filter(e=>A(e).includes(s.key)).sort((a,b)=>String(a.date).localeCompare(String(b.date)));
+  const base=[s.name,s.email||'',s.gender||'',ds.length];
+  if(!ds.length)T.push([...base,'','','',s.comments||'']);
+  else ds.forEach(e=>T.push([...base,e.course,e.date||'',slotOf(e.slot)?.label||'',s.comments||'']))});
+ mk('Student Schedule',['Student','Email','Gender','Number of duties','Course','Date','Slot','Comments from form'],T,[22,26,10,14,42,15,32,50],{wrap:true});
+ const fc=Object.keys(st.raw.stu[0]||{});
+ const F=st.students.map(s=>[...fc.map(c=>{const v=s.raw[c];return v instanceof Date?v:(v??'')}),load(s)]);
+ mk('Student Form Details',[...fc,'Duties assigned'],F,[...fc.map(c=>SLOT.test(c)?16:22),14],{wrap:true});
+
+ // --- Email Drafts: a real Excel Table (ListObject), required for Power Automate's
+ // "List rows present in a table" action to see it. A plain header row is not enough.
+ let draftN=0;const nextId=()=>'EMAIL-'+String(++draftN).padStart(4,'0');
+ const fmtDate=iso=>{if(!iso)return 'date to be confirmed';const[y,mo,d]=iso.split('-').map(Number);return new Date(y,mo-1,d).toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'})};
+ const timeRange=slotId=>{const lbl=slotOf(slotId)?.label;if(!lbl)return 'time to be confirmed';const t=lbl.split(' ').pop();return t.replace(/([AP]M)/gi,' $1').replace('-',' – ')};
+ const examLine=e=>e.course+' — '+fmtDate(e.date)+', '+timeRange(e.slot);
+ const draftRows=[];
+ st.students.filter(s=>load(s)>0).forEach(s=>{
+  const ds=st.exams.filter(e=>A(e).includes(s.key)).sort((a,b)=>String(a.date).localeCompare(String(b.date)));
+  const lines=ds.map(e=>'   •  '+examLine(e));
+  const body=['Hello '+s.name+',','','You have been assigned to proctor the following exam(s):','',...lines,'','If you have any issues with these assignments, please contact the scheduling office as soon as possible.','','Best regards,','Exam Scheduling Office'].join('\n');
+  draftRows.push([nextId(),'Student',s.name,s.email||'',"Your proctoring assignment(s)",body,'NO','Not sent']);
+ });
+ const byProf=new Map();
+ st.exams.forEach(e=>{const key=(e.profEmail||e.prof||'Unknown')+'||'+(e.prof||'');if(!byProf.has(key))byProf.set(key,{name:e.prof||'Professor',email:e.profEmail||'',exams:[]});byProf.get(key).exams.push(e)});
+ [...byProf.values()].forEach(p=>{
+  const lines=[];
+  p.exams.sort((a,b)=>String(a.date).localeCompare(String(b.date))).forEach(e=>{
+   const as=A(e).map(S).filter(Boolean);
+   lines.push('   '+examLine(e));
+   lines.push('      Proctors: '+(as.length?as.map(s=>s.name+(s.email?' ('+s.email+')':'')).join(', '):'none assigned yet'));
+   lines.push('');
+  });
+  const body=['Dear '+p.name+',','','Here are the finalized proctor assignments for your exam(s):','',...lines,'If you have any questions about these assignments, please contact the scheduling office.','','Best regards,','Exam Scheduling Office'].join('\n');
+  draftRows.push([nextId(),'Professor',p.name,p.email,'Proctor assignments for your exam(s)',body,'NO','Not sent']);
+ });
+
+ const wsE=wb.addWorksheet('Email Drafts');
+ const edHeaders=['Draft ID','Recipient Type','Recipient Name','To Email','Subject','Email Body','Approved','Send Status'];
+ wsE.addTable({
+  name:'EmailDrafts',ref:'A1',headerRow:true,totalsRow:false,
+  style:{theme:'TableStyleMedium2',showRowStripes:true},
+  columns:edHeaders.map(name=>({name})),
+  rows:draftRows
+ });
+ [14,16,22,26,34,70,11,14].forEach((w,i)=>wsE.getColumn(i+1).width=w);
+ wsE.getRow(1).height=30;
+ wsE.getRow(1).eachCell(c=>{c.font={name:'Arial',bold:true,color:{argb:'FFFFFFFF'}};c.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF1F4E78'}};c.alignment={vertical:'middle',wrapText:true}});
+ for(let i=2;i<=draftRows.length+1;i++){const row=wsE.getRow(i);row.height=90;row.eachCell({includeEmpty:true},c=>{c.font={name:'Arial'};c.alignment={vertical:'top',wrapText:true}})}
+ wsE.views=[{state:'frozen',ySplit:1}];
+
+ const buf=await wb.xlsx.writeBuffer(),url=URL.createObjectURL(new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'})),a=document.createElement('a');
+ a.href=url;a.download='proctor_schedule.xlsx';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1500);msg('Downloaded proctor_schedule.xlsx')}
+$('#exp').onclick=exportXlsx;
+function saveRaw(){try{localStorage.setItem('pc_raw',JSON.stringify(st.raw,function(k,v){const o=this[k];return o instanceof Date?{__d:o.getTime()}:v}))}catch(e){msg('Could not remember the files in this browser.')}}
+function restoreRaw(){try{const t=localStorage.getItem('pc_raw');if(!t)return false;st.raw=JSON.parse(t,(k,v)=>v&&typeof v==='object'&&v.__d!==undefined?new Date(v.__d):v);
+ if(st.raw.prof&&st.raw.stu){build();msg('Restored your last loaded files. Use "Forget saved files" to remove them.');return true}}catch(e){}return false}
+$('#forget').onclick=()=>{try{localStorage.removeItem('pc_raw');localStorage.removeItem('pc1')}catch(e){}st.raw={};st.exams=[];st.students=[];st.asg={};st.need={};st.extra={};msg('Saved files and edits removed from this browser.');render()};
+if(!restoreRaw())render();
+</script></body></html>
